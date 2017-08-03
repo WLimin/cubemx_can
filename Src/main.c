@@ -3,45 +3,35 @@
   * File Name          : main.c
   * Description        : Main program body
   ******************************************************************************
-  * This notice applies to any and all portions of this file
+  ** This notice applies to any and all portions of this file
   * that are not between comment pairs USER CODE BEGIN and
   * USER CODE END. Other portions of this file, whether 
   * inserted by the user or by software development tools
   * are owned by their respective copyright owners.
   *
-  * Copyright (c) 2017 STMicroelectronics International N.V. 
-  * All rights reserved.
+  * COPYRIGHT(c) 2017 STMicroelectronics
   *
-  * Redistribution and use in source and binary forms, with or without 
-  * modification, are permitted, provided that the following conditions are met:
+  * Redistribution and use in source and binary forms, with or without modification,
+  * are permitted provided that the following conditions are met:
+  *   1. Redistributions of source code must retain the above copyright notice,
+  *      this list of conditions and the following disclaimer.
+  *   2. Redistributions in binary form must reproduce the above copyright notice,
+  *      this list of conditions and the following disclaimer in the documentation
+  *      and/or other materials provided with the distribution.
+  *   3. Neither the name of STMicroelectronics nor the names of its contributors
+  *      may be used to endorse or promote products derived from this software
+  *      without specific prior written permission.
   *
-  * 1. Redistribution of source code must retain the above copyright notice, 
-  *    this list of conditions and the following disclaimer.
-  * 2. Redistributions in binary form must reproduce the above copyright notice,
-  *    this list of conditions and the following disclaimer in the documentation
-  *    and/or other materials provided with the distribution.
-  * 3. Neither the name of STMicroelectronics nor the names of other 
-  *    contributors to this software may be used to endorse or promote products 
-  *    derived from this software without specific written permission.
-  * 4. This software, including modifications and/or derivative works of this 
-  *    software, must execute solely and exclusively on microcontroller or
-  *    microprocessor devices manufactured by or for STMicroelectronics.
-  * 5. Redistribution and use of this software other than as permitted under 
-  *    this license is void and will automatically terminate your rights under 
-  *    this license. 
-  *
-  * THIS SOFTWARE IS PROVIDED BY STMICROELECTRONICS AND CONTRIBUTORS "AS IS" 
-  * AND ANY EXPRESS, IMPLIED OR STATUTORY WARRANTIES, INCLUDING, BUT NOT 
-  * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A 
-  * PARTICULAR PURPOSE AND NON-INFRINGEMENT OF THIRD PARTY INTELLECTUAL PROPERTY
-  * RIGHTS ARE DISCLAIMED TO THE FULLEST EXTENT PERMITTED BY LAW. IN NO EVENT 
-  * SHALL STMICROELECTRONICS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
-  * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-  * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, 
-  * OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF 
-  * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING 
-  * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
-  * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+  * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+  * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+  * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+  * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+  * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   *
   ******************************************************************************
   */
@@ -51,14 +41,11 @@
 #include "can.h"
 #include "crc.h"
 #include "dma.h"
-#include "iwdg.h"
-#include "rtc.h"
-#include "spi.h"
 #include "usart.h"
-#include "usb_device.h"
 #include "gpio.h"
 
 /* USER CODE BEGIN Includes */
+#include "diag/Trace.h"
 
 /* USER CODE END Includes */
 
@@ -66,6 +53,11 @@
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
+//uint8_t ubKeyNumber = 0x0;
+volatile uint8_t MsgFlag = 0;
+static CanTxMsgTypeDef TxMessage;
+static CanRxMsgTypeDef RxMessage;
+uint8_t txBuf[256];
 
 /* USER CODE END PV */
 
@@ -74,17 +66,109 @@ void SystemClock_Config(void);
 
 /* USER CODE BEGIN PFP */
 /* Private function prototypes -----------------------------------------------*/
-
+static void CAN_Config(void);
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
+#define LED_R(Op) HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_##Op)
+#define LED_G(Op) HAL_GPIO_WritePin(LED_G_GPIO_Port,  LED_G_Pin, GPIO_PIN_##Op)
+#define LED_B(Op) HAL_GPIO_WritePin(LED_B_GPIO_Port, LED_B_Pin, GPIO_PIN_##Op)
 
+/**
+ * @brief  Configures the CAN.
+ * @param  None
+ * @retval None
+ */
+static void CAN_Config(void) {
+	CAN_FilterConfTypeDef sFilterConfig;
+	/*##-1- Configure the CAN peripheral #######################################*/
+	hcan.pTxMsg = &TxMessage;
+	hcan.pRxMsg = &RxMessage;
+	/*
+	 CAN bps = RCC_APB1Periph_CAN1 / Prescaler / (SJW + BS1 + BS2);
+
+	 SJW = synchronisation_jump_width
+	 BS = bit_segment
+
+	 设置CAN波特率为500Kbsp
+	 CAN 波特率 = 360000000 / 6 / (1 + 5 + 6) / = 500Kbsp
+	 */
+
+	/*
+	 TTCM = time triggered communication mode
+	 ABOM = automatic bus-off management
+	 AWUM = automatic wake-up mode
+	 NART = no automatic retransmission
+	 RFLM = receive FIFO locked mode
+	 TXFP = transmit FIFO priority
+	 */
+	hcan.Init.TTCM = DISABLE; 			// 禁止时间触发模式（不生成时间戳), T
+	hcan.Init.ABOM = ENABLE; 			// 禁止自动总线关闭管理
+	hcan.Init.AWUM = DISABLE; 			// 禁止自动唤醒模式
+	hcan.Init.NART = ENABLE; 			// 禁止仲裁丢失或出错后的自动重传功能
+	hcan.Init.RFLM = DISABLE; 			// 禁止接收FIFO加锁模式
+	hcan.Init.TXFP = DISABLE; 			// 禁止传输FIFO优先级
+	hcan.Init.Mode = CAN_MODE_NORMAL; 	// 设置CAN为正常工作模式
+//	hcan.Init.Mode = CAN_MODE_LOOPBACK;
+
+	if (HAL_CAN_Init(&hcan) != HAL_OK) {
+		/* Initiliazation Error */
+		Error_Handler();
+	}
+
+	/*##-2- Configure the CAN Filter ###########################################*/
+	/* 设置CAN滤波器0 */
+	sFilterConfig.FilterNumber = 0;							// 滤波器序号，0-13，共14个滤波器
+	sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;	// 滤波器模式，设置ID掩码模式
+	sFilterConfig.FilterScale = CAN_FILTERSCALE_32BIT;	// 32位滤波
+	sFilterConfig.FilterIdHigh = 0x0000;					// 掩码后ID的高16bit
+	sFilterConfig.FilterIdLow = 0x0000;					// 掩码后ID的低16bit
+	sFilterConfig.FilterMaskIdHigh = 0x0000;				// ID掩码值高16bit
+	sFilterConfig.FilterMaskIdLow = 0x0000;				// ID掩码值低16bit
+	sFilterConfig.FilterFIFOAssignment = 0;				// 滤波器绑定FIFO 0
+	sFilterConfig.FilterActivation = ENABLE;				// 使能滤波器
+	sFilterConfig.BankNumber = 14;
+
+	if (HAL_CAN_ConfigFilter(&hcan, &sFilterConfig) != HAL_OK) {
+		/* Filter configuration Error */
+		Error_Handler();
+	}
+
+	/*##-3- Configure Transmission process #####################################*/
+	hcan.pTxMsg->StdId = 0x101;
+	hcan.pTxMsg->ExtId = 0x00;
+	hcan.pTxMsg->RTR = CAN_RTR_DATA;
+	hcan.pTxMsg->IDE = CAN_ID_STD;
+	hcan.pTxMsg->DLC = 1;
+}
+/**
+ * @brief  Transmission  complete callback in non blocking mode
+ * @param  CanHandle: pointer to a CAN_HandleTypeDef structure that contains
+ *         the configuration information for the specified CAN.
+ * @retval None
+ */
+void HAL_CAN_RxCpltCallback(CAN_HandleTypeDef *HCan) {
+	if (HCan->pRxMsg->IDE == CAN_ID_STD) {
+		MsgFlag = 1;
+	}
+
+	/* Receive */
+	if (HAL_CAN_Receive_IT(HCan, CAN_FIFO0) != HAL_OK) {
+		/* Reception Error */
+		Error_Handler();
+	}
+}
+void HAL_CAN_ErrorCallback(CAN_HandleTypeDef *hcan) {
+	sprintf(txBuf, "HAL_CAN_ErrorCallback, GetState=%x,GetError=%x\n", HAL_CAN_GetState(hcan), HAL_CAN_GetError(hcan));
+	HAL_UART_Transmit_IT(&huart2, txBuf, (uint16_t) strlen(txBuf));
+}
 /* USER CODE END 0 */
-
 int main(void)
 {
 
   /* USER CODE BEGIN 1 */
+	// Send a greeting to the trace device (skipped on Release).
+	trace_puts("Hello ARM World!");
 
   /* USER CODE END 1 */
 
@@ -107,18 +191,34 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
-  MX_CAN_Init();
-  MX_USART1_UART_Init();
-  MX_USART2_UART_Init();
-  MX_SPI1_Init();
   MX_CRC_Init();
-  MX_SPI2_Init();
-  MX_RTC_Init();
-  MX_IWDG_Init();
-  MX_USB_DEVICE_Init();
+  MX_USART2_UART_Init();
+  MX_CAN_Init();
 
   /* USER CODE BEGIN 2 */
+	LED_R(SET);
+	LED_G(SET);
+	LED_B(SET);
+	HAL_GPIO_WritePin(LED_BUILTIN_GPIO_Port, LED_BUILTIN_Pin, GPIO_PIN_RESET); //ON
+	HAL_Delay(300);
+	LED_R(RESET);
+	LED_G(RESET);
+	LED_B(RESET); //OFF
+	HAL_GPIO_WritePin(LED_BUILTIN_GPIO_Port, LED_BUILTIN_Pin, GPIO_PIN_SET); //OFF
 
+	/*##-1- Configure the CAN peripheral #######################################*/
+	CAN_Config();
+	/*##-2- Start the Reception process and enable reception interrupt #########*/
+	if (HAL_CAN_Receive_IT(&hcan, CAN_FIFO0) != HAL_OK) {
+		/* Reception Error */
+		Error_Handler();
+	}
+
+	uint32_t seconds = 0;
+	uint8_t ubKeyNumber = 0;
+	memset(txBuf, 0, 256l);
+	uint32_t Ticks = HAL_GetTick() + 500;
+	uint8_t isOn = 0;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -128,7 +228,53 @@ int main(void)
   /* USER CODE END WHILE */
 
   /* USER CODE BEGIN 3 */
+		// Count seconds on the trace device.
+		if (Ticks <= HAL_GetTick()) {
+			Ticks = HAL_GetTick() + 500; //1ms interrupt
+			if (isOn) {
+				isOn = 0;
+				HAL_GPIO_WritePin(LED_BUILTIN_GPIO_Port, LED_BUILTIN_Pin, GPIO_PIN_SET);
+				sprintf(txBuf, "Second %u\n", seconds);
+				HAL_UART_Transmit_IT(&huart2, txBuf, (uint16_t) strlen(txBuf));
+				trace_printf(txBuf);
+			} else {
+				isOn = 1;
+				HAL_GPIO_WritePin(LED_BUILTIN_GPIO_Port, LED_BUILTIN_Pin, GPIO_PIN_RESET);
+				seconds++;
+				/* Set the data to be tranmitted */
+				ubKeyNumber = ++ubKeyNumber % 8;
+				hcan.pTxMsg->Data[0] = ubKeyNumber;
+				hcan.pTxMsg->Data[1] = 0xAD;
 
+				/*##-3- Start the Transmission process ###############################*/
+				if (HAL_CAN_Transmit(&hcan, 10) != HAL_OK) {
+					/* Transmition Error */
+					Error_Handler();
+				}
+			}
+		}
+		if (MsgFlag) {
+			MsgFlag = 0;
+			sprintf(txBuf, "StdId=0x%08X, DLC=0x%08X, Data[0]=0x%02X\n", RxMessage.StdId, RxMessage.DLC,
+					RxMessage.Data[0]);
+			HAL_UART_Transmit_IT(&huart2, txBuf, (uint16_t) strlen(txBuf));
+			uint8_t ledCtrl = RxMessage.Data[0];
+			if (ledCtrl & 0x1) {
+				LED_B(SET);
+			} else {
+				LED_B(RESET);
+			}
+			if (ledCtrl & 0x2) {
+				LED_G(SET);
+			} else {
+				LED_G(RESET);
+			}
+			if (ledCtrl & 0x4) {
+				LED_R(SET);
+			} else {
+				LED_R(RESET);
+			}
+		}
   }
   /* USER CODE END 3 */
 
@@ -141,15 +287,13 @@ void SystemClock_Config(void)
 
   RCC_OscInitTypeDef RCC_OscInitStruct;
   RCC_ClkInitTypeDef RCC_ClkInitStruct;
-  RCC_PeriphCLKInitTypeDef PeriphClkInit;
 
     /**Initializes the CPU, AHB and APB busses clocks 
     */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI|RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
@@ -168,14 +312,6 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
-  {
-    _Error_Handler(__FILE__, __LINE__);
-  }
-
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC|RCC_PERIPHCLK_USB;
-  PeriphClkInit.RTCClockSelection = RCC_RTCCLKSOURCE_LSI;
-  PeriphClkInit.UsbClockSelection = RCC_USBCLKSOURCE_PLL_DIV1_5;
-  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     _Error_Handler(__FILE__, __LINE__);
   }
@@ -230,9 +366,11 @@ void _Error_Handler(char * file, int line)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
-  while(1) 
-  {
-  }
+	trace_printf("Error_Handler in File: %s, Line: %d\n", file, line);
+	HAL_Delay(300);
+//  while(1)
+//  {
+//  }
   /* USER CODE END Error_Handler_Debug */ 
 }
 
@@ -250,6 +388,7 @@ void assert_failed(uint8_t* file, uint32_t line)
   /* USER CODE BEGIN 6 */
   /* User can add his own implementation to report the file name and line number,
     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+	trace_printf("Wrong parameters value: file %s on line %d\r\n", file, line);
   /* USER CODE END 6 */
 
 }
